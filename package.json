@@ -6,7 +6,8 @@
   "type": "commonjs",
   "scripts": {
     "test": "",
-    "start": "webpack serve"
+    "start": "webpack serve",
+    "build": "webpack"
   },
   "author": "",
   "license": "ISC",
