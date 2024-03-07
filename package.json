@@ -1,0 +1,25 @@
+{
+  "name": "spotify-stats",
+  "version": "1.0.0",
+  "description": "",
+  "main": "bundle.js",
+  "type": "commonjs",
+  "scripts": {
+    "test": "",
+    "start": "webpack serve"
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "browserify": "^17.0.0",
+    "ts-loader": "^9.5.1",
+    "tsify": "^5.0.4",
+    "typescript": "^5.3.3",
+    "watchify": "^4.0.0",
+    "webpack": "^5.90.3",
+    "webpack-cli": "^5.1.4"
+  },
+  "dependencies": {
+    "zod": "^3.22.4"
+  }
+}
