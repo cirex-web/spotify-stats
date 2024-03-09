@@ -83,8 +83,8 @@ export class SpotifyAPI {
    */
   async getThumbnailUrl(id: string): Promise<string> {
     this.queuedIds.push(id);
-    const promise = new Promise<string>((re) => {
-      this.callBacks[id] = re;
+    const promise = new Promise<string>((resolvePromise) => {
+      this.callBacks[id] = resolvePromise; // call resolve when done
     });
     if (this.timeoutId === undefined) {
       this.timeoutId = setTimeout(() => this.processBatch(), 200);
@@ -97,4 +97,3 @@ export class SpotifyAPI {
     return promise; //I promise uwu
   }
 }
-//TODO: left off here - none of this has been tested
