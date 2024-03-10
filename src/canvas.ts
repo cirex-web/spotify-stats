@@ -83,55 +83,77 @@ function drawHorizontalLine(
   ctx.closePath();
   ctx.stroke();
 }
+
+function fillRectStartEnd(
+  ctx: CanvasRenderingContext2D,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number
+) {
+  ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
+}
 class Bar {
   HEIGHT: number;
-  WIDTH: number; //inlcuding image
+  WIDTH: number; //max width of actual bar, not including image
   LABEL_PADDING_LEFT = 20;
   LABEL_PADDING_RIGHT = 15;
   VALUE_MARGIN_LEFT = 10;
   IMAGE_RECT_GAP = 10;
   TRANSITION_DURATION_MS = 250;
+  // x coord where bars start (imageX is thus < x)
   x: number;
-  desiredY: number; //top left pos (desired y val)
-  curY: number;
-  prevY: number; //what we're transitioning from
+  // topY
+  y: number;
+  desiredI: number; //top left pos (desired y val)
+  curI: number;
+  prevI: number; //what we're transitioning from
   transitionStartTimeStamp: number | null = null;
   label: string;
   img?: HTMLImageElement;
   percentFilled: number;
   currentValue: number;
+  RECT_GAP: number; // some bleed in of responsibility... we do need this to render the rectangle though if the only thing we're passing in is the index
+  IMAGE_PADDING = 4;
+  THIN_RECT_HEIGHT = 10;
+
   constructor(
     trackData: IFullTrackData,
     width: number,
     height: number,
+    gap: number,
     x: number,
-    curY: number
+    y: number,
+    curI: number
   ) {
-    this.label = trackData.master_metadata_track_name;
+    this.label =
+      trackData.master_metadata_track_name +
+      " - " +
+      trackData.master_metadata_album_artist_name;
     this.img = trackData.img;
 
     this.WIDTH = width;
     this.HEIGHT = height;
+    this.RECT_GAP = gap;
     this.x = x;
-    this.desiredY = curY; // also moot value
-    this.curY = curY;
-    this.prevY = curY; //moot value that doesn't really matter cuz we aren't transitioning yet
+    this.y = y;
+    this.desiredI = this.curI = this.prevI = curI; //prev and desired only matter if transitionStartTimeStamp is not null
     this.percentFilled = 1;
     this.currentValue = 1;
   }
   moveTo(
-    y: number,
+    i: number,
     percentFilled: number,
     currentValue: number,
     timeStamp: number
   ) {
     console.assert(!isNaN(percentFilled));
-    if (this.desiredY !== y) {
+    if (this.desiredI !== i) {
       // only do the transition stuff IF it's a new dest
 
-      this.desiredY = y;
+      this.desiredI = i;
       this.transitionStartTimeStamp = timeStamp;
-      this.prevY = this.curY;
+      this.prevI = this.curI;
     }
     this.currentValue = currentValue;
     this.percentFilled = percentFilled;
@@ -143,29 +165,70 @@ class Bar {
    */
   draw(ctx: CanvasRenderingContext2D, timestamp: number) {
     if (this.transitionStartTimeStamp !== null) {
-      const totalDist = this.desiredY - this.prevY;
+      const totalDist = this.desiredI - this.prevI;
       const progressPercent = Math.min(
         1,
         (timestamp - this.transitionStartTimeStamp) /
           this.TRANSITION_DURATION_MS
       );
-      this.curY = this.prevY + totalDist * progressPercent;
+      this.curI = this.prevI + totalDist * progressPercent;
       if (progressPercent === 1) {
         this.transitionStartTimeStamp = null;
       }
     }
-    // Q should ctx be passed in or as a class prop
-    const fullRectStartX = this.x + this.HEIGHT + this.IMAGE_RECT_GAP;
-    const fullRectEndX = this.x + this.WIDTH - 190; // -190 for the XXX min part
+    const rectTopY = this.curI * (this.HEIGHT + this.RECT_GAP) + this.y;
+
+    // image x pos calculation
+    const percentProgress =
+      this.curI > 11 // FIXME: grrr magic number
+        ? 0
+        : Math.floor(this.curI) % 2 === 0
+        ? (Math.cos((this.curI % 1) * Math.PI) + 1) / 2
+        : 1 - (Math.cos((this.curI % 1) * Math.PI) + 1) / 2; //First row is inwards
+    const imageHeight = this.HEIGHT * 2;
+    const imageLeftX =
+      this.x -
+      imageHeight * 2 -
+      this.IMAGE_RECT_GAP +
+      imageHeight * percentProgress;
+
+    const fullRectStartX = this.x;
+    const fullRectEndX = this.x + this.WIDTH;
     const rectWidth = (fullRectEndX - fullRectStartX) * this.percentFilled;
     const labelMaxWidth =
       rectWidth - this.LABEL_PADDING_LEFT - this.LABEL_PADDING_RIGHT;
-    const labelFont = "24px Rubik";
+    const labelFont = "normal 400 22px Oswald";
     const minuteFont = "25px Courier New";
-    const rectEndMiddleY = this.curY + this.HEIGHT / 2; // right in the middle
+    const rectMiddleY = rectTopY + this.HEIGHT / 2; // right in the middle
     const rectEndX = fullRectStartX + rectWidth;
+
+    if (this.img) {
+      ctx.drawImage(
+        this.img,
+        imageLeftX + this.IMAGE_PADDING,
+        rectMiddleY - imageHeight / 2 + this.IMAGE_PADDING,
+        imageHeight - this.IMAGE_PADDING * 2,
+        imageHeight - this.IMAGE_PADDING * 2
+      );
+    }
+    drawText(ctx, {
+      text: `${(Math.floor(this.currentValue / 1000) / 60).toFixed(2)} min`,
+      align: "left",
+      baseline: "middle",
+      font: minuteFont,
+      x: rectEndX + this.VALUE_MARGIN_LEFT,
+      y: rectMiddleY,
+    });
+
     ctx.fillStyle = "black";
-    ctx.fillRect(fullRectStartX, this.curY, rectWidth, this.HEIGHT);
+    ctx.fillRect(fullRectStartX, rectTopY, rectWidth, this.HEIGHT);
+    fillRectStartEnd(
+      ctx,
+      imageLeftX + imageHeight - this.IMAGE_PADDING,
+      rectMiddleY - this.THIN_RECT_HEIGHT / 2,
+      fullRectStartX,
+      rectMiddleY + this.THIN_RECT_HEIGHT / 2
+    );
     if (textFitsWidth(ctx, this.label, labelMaxWidth, labelFont)) {
       drawText(ctx, {
         text: this.label,
@@ -173,7 +236,7 @@ class Bar {
         baseline: "middle",
         font: labelFont,
         x: rectEndX - this.LABEL_PADDING_RIGHT,
-        y: rectEndMiddleY,
+        y: rectMiddleY,
         color: "white",
       });
     } else {
@@ -183,22 +246,11 @@ class Bar {
         baseline: "middle",
         font: labelFont,
         x: fullRectStartX + this.LABEL_PADDING_LEFT,
-        y: rectEndMiddleY,
+        y: rectMiddleY,
         maxWidth: labelMaxWidth,
         color: "white",
       });
     }
-    if (this.img) {
-      ctx.drawImage(this.img, this.x, this.curY, this.HEIGHT, this.HEIGHT);
-    }
-    drawText(ctx, {
-      text: `${(Math.floor(this.currentValue / 1000) / 60).toFixed(2)} min`,
-      align: "left",
-      baseline: "middle",
-      font: minuteFont,
-      x: rectEndX + this.VALUE_MARGIN_LEFT,
-      y: rectEndMiddleY,
-    });
 
     return this.transitionStartTimeStamp === null;
   }
@@ -246,16 +298,19 @@ class Timeline {
     }
   }
 }
+
 export class BarAnimator {
   MS_PER_FRAME = MS_IN_DAY / 24;
   RECT_HEIGHT = 42;
   GRAPH_MARGIN_LEFT = 20;
   GRAPH_MARGIN_RIGHT = 40;
   GRAPH_MARGIN_TOP = 20;
+  AXIS_HEIGHT = 150; // top axis height
   GRAPH_MARGIN_BOTTOM = 20;
   RECT_GAP = 6;
-  NUM_ROWS = 13;
-
+  NUM_ROWS = 11;
+  AXIS_MARGIN_LEFT = 190; // magic number that's approximately the width of entirety of the stacked images
+  BAR_MARGIN_RIGHT = 140; //to account for the XXX min after every bar
   windowData: WindowData;
   windowMax: Record<number, number>; //basically more flexible array
   idToSong: Record<string, IFullTrackData>;
@@ -266,13 +321,28 @@ export class BarAnimator {
     endDay: number;
   };
   curDate: Date;
-  zero = 0;
   activeBarMap: Record<string, Bar> = {};
   timeline: Timeline;
   WIDTH: number;
   HEIGHT: number;
   // so we want a fixed width/height for the canvas - we're then just scaling everything in here maybe x2 to fit dpi. BUT extending the canvas dims by x2 initially does not mean all of that is free real-estate lol
 
+  AXIS_INTERVALS = [
+    0.25,
+    0.5,
+    1,
+    2,
+    4,
+    8,
+    16,
+    32,
+    64,
+    128,
+    256,
+    512,
+    Infinity,
+  ].map((ms) => ms * 1000 * 60); //okay yeah we need the last one lol
+  windowAxis: Record<number, number>;
   constructor(
     windowData: WindowData,
     idToSong: Record<string, IFullTrackData>,
@@ -308,6 +378,19 @@ export class BarAnimator {
         );
       }
     }
+    this.windowAxis = {};
+    for (const day of Object.keys(windowData)) {
+      const maxValForDay = this.getWeightedAverage(
+        this.windowMax,
+        new Date(parseInt(day) * MS_IN_DAY)
+      );
+      for (let i = 1; i < this.AXIS_INTERVALS.length; i++) {
+        if (maxValForDay / this.AXIS_INTERVALS[i] < 3) {
+          this.windowAxis[parseInt(day)] = i - 1;
+          break;
+        }
+      }
+    }
 
     const dpr = 3;
     const rect = canvas.getBoundingClientRect();
@@ -327,9 +410,8 @@ export class BarAnimator {
    * Very expensive weighted average done on every id within the given window. somehow this doesn't noticeably slow things down though lol
    * @returns Sorted rows in array given current time (can be between two whole-number dates)
    */
-  getInterpolatedCurrentData(curDate?: Date) {
-    if (!curDate) curDate = this.curDate;
-    const windowSize = 10; // arbitrary number that seems to give pretty smooooth bar lengths
+  getInterpolatedCurrentData(curDate: Date = this.curDate) {
+    const windowSize = 10.5; // arbitrary number that seems to give pretty smooooth bar lengths
     const leftDay = Math.ceil(+curDate / MS_IN_DAY - windowSize / 2);
     const rightDay = Math.floor(+curDate / MS_IN_DAY + windowSize / 2);
     const curDayFloat = +curDate / MS_IN_DAY;
@@ -378,11 +460,14 @@ export class BarAnimator {
 
     return res.sort((a, b) => b[1] - a[1]);
   }
-  getWeightedAverageForMax() {
+  getWeightedAverage(
+    curWindow: Record<number, number>,
+    curDate: Date = this.curDate
+  ) {
     const windowSize = 5.5; // decimal val makes it jitter a lot less (probably cuz it prevents the sudden loss + gain of two different datapoints)
-    const leftDay = Math.ceil(+this.curDate / MS_IN_DAY - windowSize / 2);
-    const rightDay = Math.floor(+this.curDate / MS_IN_DAY + windowSize / 2);
-    const curDayFloat = +this.curDate / MS_IN_DAY;
+    const leftDay = Math.ceil(+curDate / MS_IN_DAY - windowSize / 2);
+    const rightDay = Math.floor(+curDate / MS_IN_DAY + windowSize / 2);
+    const curDayFloat = +curDate / MS_IN_DAY;
     let weight = 0;
     let sum = 0;
 
@@ -390,17 +475,31 @@ export class BarAnimator {
       const curWeight =
         Math.cos(((day - curDayFloat) / (windowSize / 2)) * Math.PI) / 2 + 0.5;
       weight += curWeight;
-      sum += (this.windowMax[day] ?? 0) * curWeight;
+      sum += (curWindow[day] ?? 0) * curWeight;
     }
     return weight === 0 ? 0 : sum / weight;
   }
   drawFrame(timeStamp: number) {
-    const dateFont = "150px Helvetica";
     this.ctx.fillStyle = "#cbf0f8";
     this.ctx.fillRect(0, 0, this.WIDTH, this.HEIGHT);
     const sortedRows = this.getInterpolatedCurrentData();
     const topRows = sortedRows.slice(0, this.NUM_ROWS); //for actual graph rendering (we still need all rows for reference tho)
-    const maxMs = Math.max(1000 * 60, this.getWeightedAverageForMax()); //we don't want it dropping to 0 lol
+    const maxMs = Math.max(
+      1000 * 60,
+      this.getWeightedAverage(
+        this.windowMax,
+        new Date(+this.curDate - MS_IN_DAY * 0.4)
+      )
+    ); //we don't want it dropping to 0 lol
+    const axisStepIndex = this.getWeightedAverage(this.windowAxis);
+    const axisLength =
+      this.WIDTH -
+      this.GRAPH_MARGIN_LEFT -
+      this.GRAPH_MARGIN_RIGHT -
+      this.AXIS_MARGIN_LEFT -
+      this.BAR_MARGIN_RIGHT;
+    this.drawAxis(axisStepIndex, maxMs, axisLength);
+
     const idToVal = sortedRows.reduce<Record<string, number>>(
       (obj, [id, val]) => {
         obj[id] = val;
@@ -421,56 +520,144 @@ export class BarAnimator {
         (id) => topIdToVal[id] === undefined //no longer in the top
       )
     );
+
+    // update all active bars
     topRows.forEach(([id, val], i) => {
       if (!this.activeBarMap[id])
         this.activeBarMap[id] = new Bar(
           this.idToSong[id],
-          this.WIDTH - this.GRAPH_MARGIN_LEFT - this.GRAPH_MARGIN_RIGHT,
+          axisLength, // geez okay
           this.RECT_HEIGHT,
-          this.GRAPH_MARGIN_LEFT,
-          this.HEIGHT
+          this.RECT_GAP,
+          this.GRAPH_MARGIN_LEFT + this.AXIS_MARGIN_LEFT,
+          this.GRAPH_MARGIN_TOP + this.AXIS_HEIGHT,
+          this.NUM_ROWS + 1
         );
-      this.activeBarMap[id].moveTo(
-        this.GRAPH_MARGIN_TOP + (this.RECT_HEIGHT + this.RECT_GAP) * i,
-        val / maxMs,
-        val,
-        timeStamp
-      );
+      this.activeBarMap[id].moveTo(i, val / maxMs, val, timeStamp);
     });
+    // update non-top bars
     for (const id of killedIds) {
       this.activeBarMap[id].moveTo(
-        this.HEIGHT,
+        this.NUM_ROWS + 1,
         (idToVal[id] ?? 0) / maxMs, //data could've evaporated by this point
         idToVal[id] ?? 0,
         timeStamp
       );
     }
+
+    //kill inactive bars if finished transitioning
     for (const id of Object.keys(this.activeBarMap)) {
       const doneAnimating = this.activeBarMap[id].draw(this.ctx, timeStamp);
       if (doneAnimating && killedIds.has(id)) delete this.activeBarMap[id];
     }
 
+    // drawText(this.ctx, {
+    //   text: ,
+    //   font: dateFont,
+    //   align: "right",
+    //   baseline: "bottom",
+    //   x: this.WIDTH - this.GRAPH_MARGIN_RIGHT,
+    //   y: this.HEIGHT - this.GRAPH_MARGIN_BOTTOM,
+    // });
     drawText(this.ctx, {
-      text: `${this.curDate.getMonth() + 1}/${this.curDate.getDate()}/${
-        this.curDate.getFullYear() % 100
-      }`,
-      font: dateFont,
-      align: "right",
-      baseline: "bottom",
-      x: this.WIDTH - this.GRAPH_MARGIN_RIGHT,
-      y: this.HEIGHT - this.GRAPH_MARGIN_BOTTOM,
+      text: `Most Streamed Spotify Songs at the end of ${
+        this.curDate.getMonth() + 1
+      }/${this.curDate.getDate()}/${this.curDate.getFullYear() % 100}`,
+      align: "left",
+      baseline: "top",
+      x: this.GRAPH_MARGIN_LEFT,
+      y: this.GRAPH_MARGIN_TOP,
+      font: "normal 600 50px Oswald",
+      color: "black",
     });
     // this.timeline.draw(this.ctx, this.WIDTH, this.HEIGHT);
   }
 
-  startLoop() {
-    this.curDate = new Date("6/27/21");
-    setInterval(
-      () => (this.curDate = new Date(this.MS_PER_FRAME + +this.curDate)),
+  private drawAxis(axisStepIndex: number, maxMs: number, axisLength: number) {
+    const axisSkew = 1 - (axisStepIndex % 1);
+    const floorIndex = Math.floor(axisStepIndex);
+    console.assert(floorIndex >= 0);
+    drawText(this.ctx, {
+      text: "Minutes streamed in 30-day weighted window",
+      align: "center",
+      x: this.WIDTH / 2,
+      y: this.GRAPH_MARGIN_TOP + this.AXIS_HEIGHT - 42,
+      baseline: "bottom",
+      color: "black",
+      font: "25px Oswald",
+    });
+    this.drawAxisHelper(
+      this.AXIS_INTERVALS[floorIndex],
+      axisSkew,
+      maxMs,
+      axisLength
+    );
+    if (floorIndex + 1 < this.AXIS_INTERVALS.length) {
+      this.drawAxisHelper(
+        this.AXIS_INTERVALS[floorIndex + 1],
+        1 - axisSkew,
+        maxMs,
+        axisLength
+      );
+    }
+  }
+
+  drawAxisHelper(
+    step: number,
+    opacity: number,
+    maxMs: number,
+    axisLength: number
+  ) {
+    const FADE_OFF_DIST = 50; //doesn't include invisible dist
+    const INVISIBLE_DIST = 30;
+    for (let i = 0; i <= maxMs * 1.3; i += step) {
+      const lineX =
+        this.GRAPH_MARGIN_LEFT +
+        this.AXIS_MARGIN_LEFT +
+        (i / maxMs) * axisLength;
+      const lineY = this.GRAPH_MARGIN_TOP + this.AXIS_HEIGHT;
+      const curOpacity = Math.min(
+        opacity,
+        Math.min(
+          FADE_OFF_DIST,
+          Math.max(0, this.WIDTH - INVISIBLE_DIST - lineX)
+        ) / FADE_OFF_DIST
+      ); // 20 - 30
+      // console.log(curOpacity);
+      this.ctx.strokeStyle = `rgba(153,153,153,${curOpacity})`;
+      this.ctx.lineWidth = 2;
+      drawVerticalLine(
+        this.ctx,
+        lineX,
+        lineY,
+        this.HEIGHT - this.GRAPH_MARGIN_BOTTOM - this.GRAPH_MARGIN_TOP
+      );
+      drawText(this.ctx, {
+        text: `${Math.round((i / (1000 * 60)) * 10) / 10}`,
+        align: "center",
+        x: lineX,
+        y: lineY - 10,
+        baseline: "bottom",
+        font: "20px Rubik",
+        color: `rgba(153,153,153,${curOpacity})`,
+      });
+    }
+  }
+
+  startLoop(startDate?: Date) {
+    this.curDate = startDate ?? new Date(this.range.startDay * MS_IN_DAY);
+    const intervalId = setInterval(
+      () => {
+        this.curDate = new Date(this.MS_PER_FRAME + +this.curDate);
+        const endDate = new Date(this.range.endDay * MS_IN_DAY);
+        if (this.curDate >= endDate) {
+          this.curDate = endDate;
+          clearInterval(intervalId);
+        }
+      },
       1000 / 60 // 60 Hz
     );
     requestAnimationFrame((time) => {
-      this.zero = time;
       requestAnimationFrame((time) => this.drawLoop(time));
     });
   }

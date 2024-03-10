@@ -85,6 +85,7 @@ export class SpotifyAPI {
     this.queuedIds.push(id);
     const promise = new Promise<string>((resolvePromise) => {
       this.callBacks[id] = resolvePromise; // call resolve when done
+      // resolvePromise("https://placehold.co/400");
     });
     if (this.timeoutId === undefined) {
       this.timeoutId = setTimeout(() => this.processBatch(), 200);
