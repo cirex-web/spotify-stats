@@ -21,6 +21,7 @@
     "webpack-cli": "^5.1.4"
   },
   "dependencies": {
+    "fast-average-color": "^9.4.0",
     "zod": "^3.22.4"
   }
 }

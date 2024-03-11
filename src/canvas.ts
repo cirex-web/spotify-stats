@@ -37,6 +37,54 @@ function truncateTextGivenWidth(
   if (hi === -1) return ""; //you can fit absolutely nothing (well at least not ...)
   return text.substring(0, hi).trim() + "...";
 }
+function drawTextDynamic(
+  ctx: CanvasRenderingContext2D,
+  options: {
+    text: string;
+    align?: CanvasTextAlign;
+    baseline?: CanvasTextBaseline;
+    fontType: string;
+    maxWidth: number;
+    maxHeight: number;
+    x: number;
+    y: number;
+    color?: string;
+    lineGap: number; // equivalent to CSS line height property (ex. 1.1)
+    minFont: number;
+    maxFont: number;
+  }
+) {
+  ctx.textAlign = options.align ?? "left";
+  ctx.textBaseline = options.baseline ?? "alphabetic";
+  let lo = options.minFont,
+    hi = options.maxFont;
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    ctx.font = `${mid}px ${options.fontType}`;
+    const lines = wrapText(ctx, options.text, options.maxWidth);
+    if (
+      lines === null ||
+      lines.length * (mid * options.lineGap) > options.maxHeight
+    ) {
+      hi = mid - 1;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  if (hi < options.minFont) throw new Error("decrease your minFont man");
+  drawText(ctx, {
+    text: options.text,
+    align: options.align,
+    baseline: options.baseline,
+    font: `${hi}px ${options.fontType}`,
+    maxWidth: options.maxWidth,
+    x: options.x,
+    y: options.y,
+    color: options.color,
+    multiline: true,
+    lineHeight: hi * options.lineGap,
+  });
+}
 function drawText(
   ctx: CanvasRenderingContext2D,
   options: {
@@ -48,16 +96,30 @@ function drawText(
     x: number;
     y: number;
     color?: string;
+    multiline?: boolean;
+    lineHeight?: number;
   }
 ) {
   ctx.font = options.font;
   ctx.textAlign = options.align ?? "left";
   ctx.textBaseline = options.baseline ?? "alphabetic";
+  ctx.fillStyle = options.color ?? "white";
   let text = options.text;
-  if (options?.maxWidth !== undefined)
-    text = truncateTextGivenWidth(ctx, text, options.maxWidth);
-  ctx.fillStyle = options.color ?? "black";
-  ctx.fillText(text, options.x, options.y);
+  if (options.multiline) {
+    const { lineHeight, maxWidth } = options;
+    if (lineHeight === undefined || maxWidth === undefined)
+      throw new Error("bro you forgot some params for multiline");
+
+    const lines = wrapText(ctx, text, maxWidth);
+    if (lines === null) throw new Error("brooo what have you done");
+    lines.forEach((text, i) =>
+      ctx.fillText(text, options.x, options.y + i * lineHeight)
+    );
+  } else {
+    if (options?.maxWidth !== undefined)
+      text = truncateTextGivenWidth(ctx, text, options.maxWidth);
+    ctx.fillText(text, options.x, options.y);
+  }
 }
 function drawVerticalLine(
   ctx: CanvasRenderingContext2D,
@@ -83,7 +145,29 @@ function drawHorizontalLine(
   ctx.closePath();
   ctx.stroke();
 }
+// taken from stack overflow to save 5 minutes lol (but then I modified it anyways oh well)
+function wrapText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number
+) {
+  const words = text.split(" ");
+  const lines = [""];
 
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i];
+    if (ctx.measureText(word).width > maxWidth) return null; // we aren't gonna do character wrapping here, so this width constraint is impossible
+    const currentLine = lines[lines.length - 1];
+    const newCurrentLine =
+      currentLine.length === 0 ? word : currentLine + " " + word;
+    if (ctx.measureText(newCurrentLine).width <= maxWidth) {
+      lines[lines.length - 1] = newCurrentLine;
+    } else {
+      lines.push(word);
+    }
+  }
+  return lines;
+}
 function fillRectStartEnd(
   ctx: CanvasRenderingContext2D,
   x1: number,
@@ -93,8 +177,20 @@ function fillRectStartEnd(
 ) {
   ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
 }
+
+function pickTextColorBasedOnBgColorSimple(
+  colorInHex: string,
+  lightColor: string,
+  darkColor: string
+) {
+  const color = colorInHex.slice(1);
+  var r = parseInt(color.substring(0, 2), 16); // hexToR
+  var g = parseInt(color.substring(2, 4), 16); // hexToG
+  var b = parseInt(color.substring(4, 6), 16); // hexToB
+  return r * 0.299 + g * 0.587 + b * 0.114 > 186 ? darkColor : lightColor;
+}
 class Bar {
-  HEIGHT: number;
+  RECT_HEIGHT: number;
   WIDTH: number; //max width of actual bar, not including image
   LABEL_PADDING_LEFT = 20;
   LABEL_PADDING_RIGHT = 15;
@@ -110,12 +206,14 @@ class Bar {
   prevI: number; //what we're transitioning from
   transitionStartTimeStamp: number | null = null;
   label: string;
-  img?: HTMLImageElement;
+  img: HTMLImageElement;
+  backgroundColor: string;
   percentFilled: number;
   currentValue: number;
   RECT_GAP: number; // some bleed in of responsibility... we do need this to render the rectangle though if the only thing we're passing in is the index
-  IMAGE_PADDING = 4;
-  THIN_RECT_HEIGHT = 10;
+  IMAGE_PADDING = 6;
+  IMAGE_BORDER = 3;
+  THIN_RECT_HEIGHT = 6;
 
   constructor(
     trackData: IFullTrackData,
@@ -131,9 +229,10 @@ class Bar {
       " - " +
       trackData.master_metadata_album_artist_name;
     this.img = trackData.img;
+    this.backgroundColor = trackData.averageColor;
 
     this.WIDTH = width;
-    this.HEIGHT = height;
+    this.RECT_HEIGHT = height;
     this.RECT_GAP = gap;
     this.x = x;
     this.y = y;
@@ -176,7 +275,7 @@ class Bar {
         this.transitionStartTimeStamp = null;
       }
     }
-    const rectTopY = this.curI * (this.HEIGHT + this.RECT_GAP) + this.y;
+    const rectTopY = this.curI * (this.RECT_HEIGHT + this.RECT_GAP) + this.y;
 
     // image x pos calculation
     const percentProgress =
@@ -185,7 +284,7 @@ class Bar {
         : Math.floor(this.curI) % 2 === 0
         ? (Math.cos((this.curI % 1) * Math.PI) + 1) / 2
         : 1 - (Math.cos((this.curI % 1) * Math.PI) + 1) / 2; //First row is inwards
-    const imageHeight = this.HEIGHT * 2;
+    const imageHeight = this.RECT_HEIGHT * 2 + this.RECT_GAP * 2;
     const imageLeftX =
       this.x -
       imageHeight * 2 -
@@ -199,35 +298,37 @@ class Bar {
       rectWidth - this.LABEL_PADDING_LEFT - this.LABEL_PADDING_RIGHT;
     const labelFont = "normal 400 22px Oswald";
     const minuteFont = "25px Courier New";
-    const rectMiddleY = rectTopY + this.HEIGHT / 2; // right in the middle
+    const rectMiddleY = rectTopY + this.RECT_HEIGHT / 2; // right in the middle
     const rectEndX = fullRectStartX + rectWidth;
+    ctx.fillStyle = this.backgroundColor;
 
-    if (this.img) {
-      ctx.drawImage(
-        this.img,
-        imageLeftX + this.IMAGE_PADDING,
-        rectMiddleY - imageHeight / 2 + this.IMAGE_PADDING,
-        imageHeight - this.IMAGE_PADDING * 2,
-        imageHeight - this.IMAGE_PADDING * 2
-      );
-    }
-    drawText(ctx, {
-      text: `${(Math.floor(this.currentValue / 1000) / 60).toFixed(2)} min`,
-      align: "left",
-      baseline: "middle",
-      font: minuteFont,
-      x: rectEndX + this.VALUE_MARGIN_LEFT,
-      y: rectMiddleY,
-    });
+    ctx.fillRect(
+      imageLeftX + this.IMAGE_PADDING,
+      rectMiddleY - imageHeight / 2 + this.IMAGE_PADDING,
+      imageHeight - this.IMAGE_PADDING * 2,
+      imageHeight - this.IMAGE_PADDING * 2
+    );
 
-    ctx.fillStyle = "black";
-    ctx.fillRect(fullRectStartX, rectTopY, rectWidth, this.HEIGHT);
+    ctx.drawImage(
+      this.img,
+      imageLeftX + this.IMAGE_PADDING + this.IMAGE_BORDER,
+      rectMiddleY - imageHeight / 2 + this.IMAGE_PADDING + this.IMAGE_BORDER,
+      imageHeight - (this.IMAGE_PADDING + this.IMAGE_BORDER) * 2,
+      imageHeight - (this.IMAGE_PADDING + this.IMAGE_BORDER) * 2
+    );
+
+    ctx.fillRect(fullRectStartX, rectTopY, rectWidth, this.RECT_HEIGHT);
     fillRectStartEnd(
       ctx,
       imageLeftX + imageHeight - this.IMAGE_PADDING,
       rectMiddleY - this.THIN_RECT_HEIGHT / 2,
       fullRectStartX,
       rectMiddleY + this.THIN_RECT_HEIGHT / 2
+    );
+    const labelColor = pickTextColorBasedOnBgColorSimple(
+      this.backgroundColor,
+      "white",
+      "black"
     );
     if (textFitsWidth(ctx, this.label, labelMaxWidth, labelFont)) {
       drawText(ctx, {
@@ -237,7 +338,7 @@ class Bar {
         font: labelFont,
         x: rectEndX - this.LABEL_PADDING_RIGHT,
         y: rectMiddleY,
-        color: "white",
+        color: labelColor,
       });
     } else {
       drawText(ctx, {
@@ -247,8 +348,34 @@ class Bar {
         font: labelFont,
         x: fullRectStartX + this.LABEL_PADDING_LEFT,
         y: rectMiddleY,
-        maxWidth: labelMaxWidth,
+        maxWidth: this.WIDTH - 50, //arbitrary
         color: "white",
+      });
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(fullRectStartX, rectTopY, rectWidth, this.RECT_HEIGHT);
+      ctx.clip();
+
+      drawText(ctx, {
+        text: this.label,
+        align: "left",
+        baseline: "middle",
+        font: labelFont,
+        x: fullRectStartX + this.LABEL_PADDING_LEFT,
+        y: rectMiddleY,
+        maxWidth: this.WIDTH - 50, //arbitrary
+        color: labelColor,
+      });
+      ctx.restore();
+    }
+    if (this.curI <= 0.5) {
+      drawText(ctx, {
+        text: `${(Math.floor(this.currentValue / 1000) / 60).toFixed(2)} min`,
+        align: "left",
+        baseline: "middle",
+        font: minuteFont,
+        x: rectEndX + this.VALUE_MARGIN_LEFT,
+        y: rectMiddleY,
       });
     }
 
@@ -298,12 +425,65 @@ class Timeline {
     }
   }
 }
+class TopSong {
+  X: number;
+  Y: number;
+  data?: IFullTrackData;
+  startDate?: Date;
+  IMG_WIDTH = 210;
+  IMAGE_BORDER = 5;
+  constructor(x: number, y: number) {
+    this.X = x;
+    this.Y = y;
+  }
+  draw(ctx: CanvasRenderingContext2D, timeStamp: number, curDate: Date) {
+    if (!this.data) return;
+    if (!this.startDate) throw new Error("bro how is this possible");
+    const leadDays = Math.floor((+curDate - +this.startDate) / MS_IN_DAY);
+    drawText(ctx, {
+      text: `#1 for ${leadDays} day${leadDays === 1 ? "" : "s"}`,
+      align: "left",
+      baseline: "top",
+      font: "30px Oswald",
+      x: this.X,
+      y: this.Y,
+    });
+    drawTextDynamic(ctx, {
+      text: `${this.data.master_metadata_track_name} by ${this.data.master_metadata_album_artist_name}`,
+      align: "left",
+      baseline: "top",
+      fontType: "Oswald",
+      x: this.X,
+      y: this.Y + this.IMG_WIDTH + 35 + 20,
+      maxWidth: this.IMG_WIDTH,
+      lineGap: 1.2,
+      maxHeight: 90,
+      minFont: 10,
+      maxFont: 100,
+    });
+    ctx.fillStyle = this.data.averageColor;
+    ctx.fillRect(this.X, this.Y + 35, this.IMG_WIDTH, this.IMG_WIDTH);
+    ctx.drawImage(
+      this.data.img,
+      this.X + this.IMAGE_BORDER,
+      this.Y + 35 + this.IMAGE_BORDER,
+      this.IMG_WIDTH - 2 * this.IMAGE_BORDER,
+      this.IMG_WIDTH - 2 * this.IMAGE_BORDER
+    );
+  }
+  updateTop(newData: IFullTrackData | undefined, curDate: Date) {
+    if (newData?.spotify_track_uri !== this.data?.spotify_track_uri) {
+      this.data = newData;
+      this.startDate = curDate;
+    }
+  }
+}
 
 export class BarAnimator {
   MS_PER_FRAME = MS_IN_DAY / 24;
   RECT_HEIGHT = 42;
-  GRAPH_MARGIN_LEFT = 20;
-  GRAPH_MARGIN_RIGHT = 40;
+  GRAPH_MARGIN_LEFT = 40;
+  GRAPH_MARGIN_RIGHT = 140;
   GRAPH_MARGIN_TOP = 20;
   AXIS_HEIGHT = 150; // top axis height
   GRAPH_MARGIN_BOTTOM = 20;
@@ -313,7 +493,7 @@ export class BarAnimator {
   BAR_MARGIN_RIGHT = 140; //to account for the XXX min after every bar
   windowData: WindowData;
   windowMax: Record<number, number>; //basically more flexible array
-  idToSong: Record<string, IFullTrackData>;
+  idToSongData: Record<string, IFullTrackData>;
   ctx: CanvasRenderingContext2D;
   canvas: HTMLCanvasElement;
   range: {
@@ -322,6 +502,10 @@ export class BarAnimator {
   };
   curDate: Date;
   activeBarMap: Record<string, Bar> = {};
+  //top left corner
+  TOP_SONG_X = 240; //relative to right border
+  TOP_SONG_Y = 380; //relative to bottom border
+  topSongFrame: TopSong;
   timeline: Timeline;
   WIDTH: number;
   HEIGHT: number;
@@ -351,7 +535,7 @@ export class BarAnimator {
     if (Object.keys(windowData).length === 0) throw new Error("Empty data!");
     this.windowData = windowData;
     this.canvas = canvas;
-    this.idToSong = idToSong;
+    this.idToSongData = idToSong;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Cannot get context!");
     this.ctx = ctx;
@@ -404,6 +588,11 @@ export class BarAnimator {
     this.canvas.style.height = `${rect.height}px`;
     this.WIDTH = rect.width;
     this.HEIGHT = rect.height;
+
+    this.topSongFrame = new TopSong(
+      this.WIDTH - this.TOP_SONG_X,
+      this.HEIGHT - this.TOP_SONG_Y
+    );
   }
 
   /**
@@ -480,7 +669,7 @@ export class BarAnimator {
     return weight === 0 ? 0 : sum / weight;
   }
   drawFrame(timeStamp: number) {
-    this.ctx.fillStyle = "#cbf0f8";
+    this.ctx.fillStyle = "black";
     this.ctx.fillRect(0, 0, this.WIDTH, this.HEIGHT);
     const sortedRows = this.getInterpolatedCurrentData();
     const topRows = sortedRows.slice(0, this.NUM_ROWS); //for actual graph rendering (we still need all rows for reference tho)
@@ -525,7 +714,7 @@ export class BarAnimator {
     topRows.forEach(([id, val], i) => {
       if (!this.activeBarMap[id])
         this.activeBarMap[id] = new Bar(
-          this.idToSong[id],
+          this.idToSongData[id],
           axisLength, // geez okay
           this.RECT_HEIGHT,
           this.RECT_GAP,
@@ -560,7 +749,7 @@ export class BarAnimator {
     //   y: this.HEIGHT - this.GRAPH_MARGIN_BOTTOM,
     // });
     drawText(this.ctx, {
-      text: `Most Streamed Spotify Songs at the end of ${
+      text: `Most Streamed Spotify Songs by the end of ${
         this.curDate.getMonth() + 1
       }/${this.curDate.getDate()}/${this.curDate.getFullYear() % 100}`,
       align: "left",
@@ -568,8 +757,13 @@ export class BarAnimator {
       x: this.GRAPH_MARGIN_LEFT,
       y: this.GRAPH_MARGIN_TOP,
       font: "normal 600 50px Oswald",
-      color: "black",
     });
+
+    this.topSongFrame.updateTop(
+      topRows.length ? this.idToSongData[topRows[0][0]] : undefined,
+      this.curDate
+    );
+    this.topSongFrame.draw(this.ctx, timeStamp, this.curDate);
     // this.timeline.draw(this.ctx, this.WIDTH, this.HEIGHT);
   }
 
@@ -583,7 +777,6 @@ export class BarAnimator {
       x: this.WIDTH / 2,
       y: this.GRAPH_MARGIN_TOP + this.AXIS_HEIGHT - 42,
       baseline: "bottom",
-      color: "black",
       font: "25px Oswald",
     });
     this.drawAxisHelper(
@@ -610,7 +803,7 @@ export class BarAnimator {
   ) {
     const FADE_OFF_DIST = 50; //doesn't include invisible dist
     const INVISIBLE_DIST = 30;
-    for (let i = 0; i <= maxMs * 1.3; i += step) {
+    for (let i = 0; i <= maxMs * 1.5; i += step) {
       const lineX =
         this.GRAPH_MARGIN_LEFT +
         this.AXIS_MARGIN_LEFT +

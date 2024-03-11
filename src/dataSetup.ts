@@ -1,5 +1,6 @@
 import { SpotifyAPI } from "./api";
 import { ISpotifyHistory, ISpotifyTrack, SpotifyDataSchema } from "./schemas";
+import { FastAverageColor } from "fast-average-color";
 
 export interface RowData {
   id: string;
@@ -10,8 +11,11 @@ export type Frame = Record<string, number>;
 export type WindowData = Record<number, Frame>; //TODO: can probably be generalized to Date as key
 
 export interface IFullTrackData extends ISpotifyTrack {
-  img?: HTMLImageElement;
+  img: HTMLImageElement;
+  averageColor: string;
 }
+
+const fac = new FastAverageColor();
 
 export const fetchJSONFromFile = async (fileTitle: string) =>
   await (await fetch(fileTitle)).json();
@@ -31,40 +35,67 @@ export const generateDatePoints = async (
   spotifyAPI: SpotifyAPI
 ) => {
   const dayData: Record<number, Frame> = {};
-  const idToSong: Record<string, IFullTrackData> = {};
+  const idToSong: Record<string, ISpotifyTrack> = {};
+  const idToSongFull: Record<string, IFullTrackData> = {};
+  const promises: Promise<void>[] = [];
+
+  // dict value is map from id to isItsOwnAlbum
+  const trackSlugToIds: Record<string, Record<string, boolean>> = {}; // just in case there's duplicates (ie a song swapped between a couple different albums)
+  for (const data of rawData) {
+    const id = data.spotify_track_uri;
+    if (id === null) continue;
+    const partOfAlbum =
+      data.master_metadata_album_album_name !== data.master_metadata_track_name;
+    const trackSlug = `${data.master_metadata_track_name}/${data.master_metadata_album_artist_name}`;
+    if (trackSlugToIds[trackSlug] === undefined) trackSlugToIds[trackSlug] = {};
+    if (trackSlugToIds[trackSlug][id] !== undefined)
+      console.assert(trackSlugToIds[trackSlug][id] === partOfAlbum);
+    else trackSlugToIds[trackSlug][id] = partOfAlbum;
+  }
+  const idToSingleId: Record<string, string> = {};
+  for (const idMap of Object.values(trackSlugToIds)) {
+    console.assert(Object.keys(idMap).length > 0);
+    let singleId = Object.keys(idMap)[0]; //what all other ids in idMap will point to
+    for (const [id, partOfAlbum] of Object.entries(idMap)) {
+      if (!partOfAlbum) {
+        singleId = id; //prefer non-album track for better cover art :)
+        break;
+      }
+    }
+    for (const id of Object.keys(idMap)) {
+      idToSingleId[id] = singleId;
+    }
+  }
   for (const entry of rawData) {
-    if (
-      !(
-        entry.spotify_track_uri !== null &&
-        entry.master_metadata_album_album_name !== null &&
-        entry.master_metadata_album_artist_name !== null &&
-        entry.master_metadata_track_name !== null
-      )
-    ) {
+    if (entry.spotify_track_uri === null) {
       continue;
     }
     if (entry.ms_played <= 0) continue; // why do we even have to deal with this lol (mostly the 0 case)
     const day = Math.floor(
       new Date(entry.ts).getTime() / (1000 * 60 * 60 * 24)
     );
+    const trueId = idToSingleId[entry.spotify_track_uri];
+    console.assert(trueId !== undefined);
     if (!dayData[day]) dayData[day] = {};
-    if (dayData[day][entry.spotify_track_uri] === undefined)
-      dayData[day][entry.spotify_track_uri] = 0;
-    dayData[day][entry.spotify_track_uri] += entry.ms_played;
-    idToSong[entry.spotify_track_uri] = entry;
+
+    dayData[day][trueId] = (dayData[day][trueId] ?? 0) + entry.ms_played;
+    idToSong[trueId] = entry;
   }
-  const promises: Promise<any>[] = [];
+
+  // gets image + average color
   for (const id of Object.keys(idToSong)) {
     promises.push(
-      spotifyAPI.getThumbnailUrl(id.split(":")[2]).then((url) => {
+      spotifyAPI.getThumbnailUrl(id.split(":")[2]).then(async (url) => {
         const image = new Image();
         image.src = url;
-        idToSong[id].img = image;
+        image.crossOrigin = "anonymous";
+        const color = (await fac.getColorAsync(image)).hexa;
+        idToSongFull[id] = { ...idToSong[id], img: image, averageColor: color };
       })
     );
   }
   await Promise.all(promises);
-  return [dayData, idToSong] as const;
+  return [dayData, idToSongFull] as const;
 };
 export const generateWindowData = (
   dayData: Record<number, Frame>,
