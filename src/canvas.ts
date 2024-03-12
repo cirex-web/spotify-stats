@@ -839,10 +839,10 @@ export class BarAnimator {
 
   startLoop(startDate?: Date) {
     this.curDate = startDate ?? new Date(this.range.startDay * MS_IN_DAY);
+    const endDate = new Date(this.range.endDay * MS_IN_DAY);
     const intervalId = setInterval(
       () => {
         this.curDate = new Date(this.MS_PER_FRAME + +this.curDate);
-        const endDate = new Date(this.range.endDay * MS_IN_DAY);
         if (this.curDate >= endDate) {
           this.curDate = endDate;
           clearInterval(intervalId);

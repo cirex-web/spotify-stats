@@ -56,7 +56,7 @@ const windowData = generateWindowData(dayData, 30);
 console.log(dayData, windowData, idToSong);
 // Ok so we pass in the entire Frame (map) for every date, cuz otherwise the interpolated data would be kind of wrong if we truncated and/or sorted the data beforehand.
 const barAnimator = new BarAnimator(windowData, idToSong, canvas);
-barAnimator.startLoop(new Date("1/1/23"));
-record(canvas);
+barAnimator.startLoop(new Date("6/1/22"));
+// record(canvas);
 
 // okay wait maybe we should only pass in the final sorted data with all relevant properties
