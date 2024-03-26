@@ -1,8 +1,10 @@
 import { IFullTrackData, RowData, WindowData } from "./dataSetup";
-import { ISpotifyTrack } from "./schemas";
-
 const MS_IN_DAY = 1000 * 60 * 60 * 24;
 const MS_IN_YEAR = MS_IN_DAY * 365;
+
+//@ts-expect-error
+const capturer = new CCapture({ format: "webm", framerate: 60, verbose: true });
+
 function textFitsWidth(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -509,6 +511,8 @@ export class BarAnimator {
   timeline: Timeline;
   WIDTH: number;
   HEIGHT: number;
+  frame = 0;
+  running = false;
   // so we want a fixed width/height for the canvas - we're then just scaling everything in here maybe x2 to fit dpi. BUT extending the canvas dims by x2 initially does not mean all of that is free real-estate lol
 
   AXIS_INTERVALS = [
@@ -527,6 +531,8 @@ export class BarAnimator {
     Infinity,
   ].map((ms) => ms * 1000 * 60); //okay yeah we need the last one lol
   windowAxis: Record<number, number>;
+  imageFrameData: string[] = [];
+
   constructor(
     windowData: WindowData,
     idToSong: Record<string, IFullTrackData>,
@@ -576,7 +582,7 @@ export class BarAnimator {
       }
     }
 
-    const dpr = 3;
+    const dpr = 2;
     const rect = canvas.getBoundingClientRect();
     // Set the "actual" size of the canvas
     this.canvas.width = rect.width * dpr;
@@ -668,7 +674,12 @@ export class BarAnimator {
     }
     return weight === 0 ? 0 : sum / weight;
   }
-  drawFrame(timeStamp: number) {
+  drawFrame() {
+    this.curDate = new Date(+this.curDate + this.MS_PER_FRAME);
+    if (this.curDate >= new Date(this.range.endDay * MS_IN_DAY)) return false;
+    const timeStamp = this.frame * (1000 / 60); // 60fps
+    this.frame++;
+
     this.ctx.fillStyle = "black";
     this.ctx.fillRect(0, 0, this.WIDTH, this.HEIGHT);
     const sortedRows = this.getInterpolatedCurrentData();
@@ -765,6 +776,7 @@ export class BarAnimator {
     );
     this.topSongFrame.draw(this.ctx, timeStamp, this.curDate);
     // this.timeline.draw(this.ctx, this.WIDTH, this.HEIGHT);
+    return true;
   }
 
   private drawAxis(axisStepIndex: number, maxMs: number, axisLength: number) {
@@ -840,22 +852,33 @@ export class BarAnimator {
   startLoop(startDate?: Date) {
     this.curDate = startDate ?? new Date(this.range.startDay * MS_IN_DAY);
     const endDate = new Date(this.range.endDay * MS_IN_DAY);
-    const intervalId = setInterval(
-      () => {
-        this.curDate = new Date(this.MS_PER_FRAME + +this.curDate);
-        if (this.curDate >= endDate) {
-          this.curDate = endDate;
-          clearInterval(intervalId);
-        }
-      },
-      1000 / 60 // 60 Hz
-    );
+    // const intervalId = setInterval(
+    //   () => {
+    //     this.curDate = new Date(this.MS_PER_FRAME + +this.curDate);
+    //     if (this.curDate >= endDate) {
+    //       this.curDate = endDate;
+    //       clearInterval(intervalId);
+    //     }
+    //   },
+    //   1000 / 60 // 60 Hz
+    // );
     requestAnimationFrame((time) => {
       requestAnimationFrame((time) => this.drawLoop(time));
     });
   }
   drawLoop(time: number) {
-    this.drawFrame(time);
-    requestAnimationFrame((time) => this.drawLoop(time));
+    if (!this.running) {
+      this.running = true;
+      // capturer.start();
+    }
+    const shouldContinue = this.drawFrame();
+    // capturer.capture(this.canvas);
+
+    if (shouldContinue) {
+      requestAnimationFrame((time) => this.drawLoop(time));
+    } else {
+      // capturer.stop();
+      // capturer.save();
+    }
   }
 }

@@ -46,7 +46,9 @@ export const generateDatePoints = async (
     if (id === null) continue;
     const partOfAlbum =
       data.master_metadata_album_album_name !== data.master_metadata_track_name;
-    const trackSlug = `${data.master_metadata_track_name}/${data.master_metadata_album_artist_name}`;
+    const trackSlug = `${data.master_metadata_track_name
+      .replaceAll(".", "")
+      .toLowerCase()}/${data.master_metadata_album_artist_name}`;
     if (trackSlugToIds[trackSlug] === undefined) trackSlugToIds[trackSlug] = {};
     if (trackSlugToIds[trackSlug][id] !== undefined)
       console.assert(trackSlugToIds[trackSlug][id] === partOfAlbum);
